@@ -1,0 +1,235 @@
+import uuid
+import threading
+from bybit_p2p import P2P
+import time
+from concurrent.futures import ThreadPoolExecutor
+import requests
+import json
+from datetime import datetime
+import sys
+import traceback
+import os
+
+# 🔐 ENV VARIABLES (SET THESE)
+API_KEY = os.getenv("BYBIT_API_KEY")
+API_SECRET = os.getenv("BYBIT_API_SECRET")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+CHAT_ID = os.getenv("CHAT_ID")
+
+# 🚨 CRASH HANDLER
+def handle_crash(exc_type, exc_value, exc_traceback):
+    error_msg = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
+    send_alert(f"🚨 BOT CRASHED 🚨\n\n{error_msg[:1000]}")
+
+sys.excepthook = handle_crash
+
+# 📁 DATA STORE
+DATA_FILE = "bot_data.json"
+
+def now():
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+try:
+    with open(DATA_FILE, "r") as f:
+        data_store = json.load(f)
+except:
+    data_store = {
+        "handled_orders": [],
+        "errors": [],
+        "logs": []
+    }
+
+handled_orders = set(data_store["handled_orders"])
+
+def save_data():
+    # limit size
+    data_store["logs"] = data_store["logs"][-500:]
+    data_store["errors"] = data_store["errors"][-500:]
+
+    data_store["handled_orders"] = list(handled_orders)
+
+    with open(DATA_FILE, "w") as f:
+        json.dump(data_store, f, indent=2)
+
+# 📲 TELEGRAM
+def send_alert(message):
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        requests.post(url, data={
+            "chat_id": CHAT_ID,
+            "text": message
+        }, timeout=5)
+    except:
+        pass
+
+def repeat_alert(message, times=1, delay=2):
+    def run():
+        for _ in range(times):
+            send_alert(message)
+            time.sleep(delay)
+    threading.Thread(target=run, daemon=True).start()
+
+MODE = "ACTIVE"
+
+def alert_controller(event_type, order_id=None, error=None):
+
+    if MODE == "ACTIVE":
+        if event_type == "paid":
+            repeat_alert(f"✅ PAID → {order_id}", 2, 2)
+        elif event_type == "error":
+            repeat_alert(f"❌ ERROR → {order_id}\n{error}", 3, 2)
+
+    elif MODE == "SLEEP":
+        if event_type == "paid":
+            repeat_alert(f"🚨 PAID → {order_id}", 10, 5)
+        elif event_type == "error":
+            repeat_alert(f"🚨 ERROR → {order_id}\n{error}", 10, 5)
+
+# 🤖 CLIENT
+client = P2P(
+    api_key=API_KEY,
+    api_secret=API_SECRET,
+    testnet=False
+)
+
+send_alert("✅ BOT STARTED")
+
+retry_tracker = {}
+
+# 🔁 SAFE FETCH
+def safe_fetch(page):
+    for i in range(3):
+        try:
+            return client.get_pending_orders(page=page, size=10)
+        except Exception as e:
+            print(f"⚠️ Fetch retry {i+1} failed:", e)
+            time.sleep(2)
+    return None
+
+# 🔥 HANDLE ORDER
+def handle_order(order):
+    order_id = order.get("id", "unknown")
+
+    try:
+        status = order["status"]
+        side = order["side"]
+
+        if order_id in handled_orders:
+            return
+
+        if status != 10 or side != 0:
+            return
+
+        time_left = int(order.get("transferLastSeconds", 0))
+        if time_left <= 0 or not (30 < time_left < 720):
+            return
+
+        print(f"⚡ Processing → {order_id}")
+
+        details = client.get_order_details(orderId=order_id)
+        result = details["result"]
+
+        if result["status"] != 10:
+            return
+
+        payment = result.get("confirmedPayTerm")
+        if not payment:
+            return
+
+        client.mark_as_paid(
+            orderId=order_id,
+            paymentType=str(payment["paymentType"]),
+            paymentId=str(payment["id"]),
+            payCode=str(result["payCode"])
+        )
+
+        # 💬 CHAT
+        try:
+            client.send_chat_message(
+                orderId=order_id,
+                message="Paid Boss.For any issues or delay CALL 09047937808.",
+                contentType="str",
+                msgUuid=uuid.uuid4().hex
+            )
+        except Exception as e:
+            alert_controller("error", order_id, f"Chat failed: {e}")
+
+        handled_orders.add(order_id)
+        retry_tracker.pop(order_id, None)
+
+        msg = f"[{now()}] ✅ {order_id} marked as paid"
+        data_store["logs"].append(msg)
+
+        save_data()
+        alert_controller("paid", order_id)
+
+        time.sleep(0.2)  # rate limit
+
+    except Exception as e:
+        retry_tracker[order_id] = retry_tracker.get(order_id, 0) + 1
+
+        error_msg = f"[{now()}] ❌ {order_id} error: {e}"
+        data_store["errors"].append(error_msg)
+
+        save_data()
+        alert_controller("error", order_id, f"{type(e).__name__}: {e}")
+
+# 🔁 MAIN LOOP
+orders = []
+
+while True:
+    try:
+        print("🔄 running loop...")
+
+        try:
+            def fetch_all_orders():
+                all_orders = []
+                page = 1
+
+                while True:
+                    data = safe_fetch(page)
+                    if not data:
+                        break
+
+                    items = data.get("result", {}).get("items", [])
+                    if not items:
+                        break
+
+                    all_orders.extend(items)
+
+                    if len(items) < 10:
+                        break
+
+                    page += 1
+                    if page > 10:
+                        break
+
+                return all_orders
+
+            orders = fetch_all_orders()
+
+            if not orders:
+                print("No active orders")
+                time.sleep(10)
+                continue
+
+            orders.sort(key=lambda x: int(x.get("transferLastSeconds", 0)))
+
+            with ThreadPoolExecutor(max_workers=10) as executor:
+                list(executor.map(handle_order, orders))
+
+        except Exception as e:
+            send_alert(f"⚠️ FETCH ERROR\n{type(e).__name__}: {e}")
+            time.sleep(5)
+
+        # cleanup retry tracker
+        if len(retry_tracker) > 1000:
+            retry_tracker.clear()
+
+        time.sleep(10 if orders else 20)
+        with open("heartbeat.txt", "w") as f:
+            f.write(str(time.time()))
+
+    except Exception as e:
+        send_alert(f"🚨 MAIN LOOP ERROR\n{type(e).__name__}: {e}")
+        time.sleep(5)
