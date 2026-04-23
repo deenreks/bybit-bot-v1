@@ -16,6 +16,8 @@ API_SECRET = os.getenv("BYBIT_API_SECRET")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
+print("debug", API_KEY, API_SECRET, TELEGRAM_TOKEN, CHAT_ID)
+
 # 🚨 CRASH HANDLER
 def handle_crash(exc_type, exc_value, exc_traceback):
     error_msg = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
