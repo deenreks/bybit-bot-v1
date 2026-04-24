@@ -20,7 +20,8 @@ while True:
     print("🚀 Starting bot...")
     notify("🚀 Bot started")
 
-    process = subprocess.Popen(["python", "bot.py"])
+    process = subprocess.Popen(["python3", "bot.py"])
+    time.sleep(15)
 
     while True:
         time.sleep(10)
@@ -32,12 +33,17 @@ while True:
 
         # check heartbeat
         if os.path.exists("heartbeat.txt"):
-            with open("heartbeat.txt", "r") as f:
-                last = float(f.read())
+            try:
+                with open("heartbeat.txt", "r") as f:
+                    last = float(f.read().strip())
+            except:
+                continue
 
-            if time.time() - last > 60:
+            if time.time() - last > 180:
                 notify("⚠️ Bot frozen. Restarting...")
                 process.kill()
                 break
+        else:
+            continue
 
     time.sleep(5)

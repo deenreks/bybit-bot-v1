@@ -16,8 +16,6 @@ API_SECRET = os.getenv("BYBIT_API_SECRET")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
-print("debug", API_KEY, API_SECRET, TELEGRAM_TOKEN, CHAT_ID)
-
 # 🚨 CRASH HANDLER
 def handle_crash(exc_type, exc_value, exc_traceback):
     error_msg = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
@@ -213,9 +211,9 @@ while True:
             if not orders:
                 print("No active orders")
                 time.sleep(10)
-                continue
 
-            orders.sort(key=lambda x: int(x.get("transferLastSeconds", 0)))
+            if orders:
+                orders.sort(key=lambda x: int(x.get("transferLastSeconds", 0)))
 
             with ThreadPoolExecutor(max_workers=10) as executor:
                 list(executor.map(handle_order, orders))
@@ -227,10 +225,11 @@ while True:
         # cleanup retry tracker
         if len(retry_tracker) > 1000:
             retry_tracker.clear()
-
-        time.sleep(10 if orders else 20)
+        
         with open("heartbeat.txt", "w") as f:
             f.write(str(time.time()))
+
+        time.sleep(10 if orders else 20)
 
     except Exception as e:
         send_alert(f"🚨 MAIN LOOP ERROR\n{type(e).__name__}: {e}")
