@@ -185,6 +185,7 @@ orders = []
 while True:
     try:
         print("🔄 running loop...")
+        requests.get("http://127.0.0.1:5000/heartbeat")
 
         try:
             def fetch_all_orders():

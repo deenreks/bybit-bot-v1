@@ -7,7 +7,7 @@ load_dotenv()
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT = os.getenv("CHAT_ID")
 
-HEALTH_URL = "http://185.182.8.95:5000/health"
+HEALTH_URL = "http://178.104.86.127:5000/health"
 
 def send(msg):
     try:
