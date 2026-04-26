@@ -1,7 +1,12 @@
 import subprocess
-import time
 import os
 import requests
+import sys
+import time
+from dotenv import load_dotenv
+
+env_file = sys.argv[1] if len(sys.argv) > 1 else "configs/acc2.env"
+load_dotenv(env_file)
 
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT = os.getenv("CHAT_ID")

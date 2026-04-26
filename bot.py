@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 BOT_NAME = os.getenv("BOT_NAME", "BYBIT BOTv1")
+BOT_ID = os.getenv("BOT_ID", "bot1")
 
 
 # 🔐 ENV VARIABLES (SET THESE)
@@ -20,6 +21,7 @@ API_KEY = os.getenv("BYBIT_API_KEY")
 API_SECRET = os.getenv("BYBIT_API_SECRET")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
+
 
 # 🚨 CRASH HANDLER
 def handle_crash(exc_type, exc_value, exc_traceback):
@@ -62,7 +64,7 @@ def send_alert(message):
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         requests.post(url, data={
             "chat_id": CHAT_ID,
-            "text": f"[{BOT_NAME}]: {message}"
+            "text": f"[{BOT_NAME} ({BOT_ID})]: {message}"
         }, timeout=5)
     except:
         pass
@@ -74,7 +76,7 @@ def repeat_alert(message, times=1, delay=2):
             time.sleep(delay)
     threading.Thread(target=run, daemon=True).start()
 
-MODE = "ACTIVE"
+MODE = os.getenv("MODE", "ACTIVE")  # ACTIVE or SLEEP
 
 def alert_controller(event_type, order_id=None, error=None):
 
@@ -97,7 +99,7 @@ client = P2P(
     testnet=False
 )
 
-send_alert("✅ BOT STARTED")
+send_alert(f"✅ BOT STARTED {BOT_NAME} ({BOT_ID})")
 
 retry_tracker = {}
 
@@ -110,6 +112,8 @@ def safe_fetch(page):
             print(f"⚠️ Fetch retry {i+1} failed:", e)
             time.sleep(2)
     return None
+
+MARK_AS_PAID_DELAY = int(os.getenv("MARK_AS_PAID_DELAY", 300))  # default 5 minutes
 
 # 🔥 HANDLE ORDER
 def handle_order(order):
@@ -126,7 +130,7 @@ def handle_order(order):
             return
 
         time_left = int(order.get("transferLastSeconds", 0))
-        if time_left <= 0 or not (30 < time_left < 720):
+        if time_left <= 0 or not (30 < time_left < MARK_AS_PAID_DELAY):
             return
 
         print(f"⚡ Processing → {order_id}")
@@ -148,11 +152,13 @@ def handle_order(order):
             payCode=str(result["payCode"])
         )
 
+        PAID_MSG = os.getenv("PAID_MESSAGE", "Paid Boss.\nFor any issues or delay CALL 09047937808.")
+
         # 💬 CHAT
         try:
             client.send_chat_message(
                 orderId=order_id,
-                message="Paid Boss.\nFor any issues or delay CALL 09047937808.",
+                message=PAID_MSG,
                 contentType="str",
                 msgUuid=uuid.uuid4().hex
             )
@@ -184,8 +190,12 @@ orders = []
 
 while True:
     try:
+        # ✅ write heartbeat first
+        try:
+            requests.get(f"http://127.0.0.1:5000/heartbeat/{BOT_ID}", timeout=2)
+        except Exception as e:
+            send_alert(f"🚨 HEALTH SERVER ERROR\n{type(e).__name__}: {e}")
         print("🔄 running loop...")
-        requests.get("http://127.0.0.1:5000/heartbeat")
 
         try:
             def fetch_all_orders():
